@@ -10,7 +10,7 @@
 1. 获取API key
 - deepseek-r1模型API Key获取地址：https://www.deepseek.com/
 - qwen2.5模型API Key获取地址：https://bailian.console.aliyun.com/
-- 硅基流动API Key获取地址： https://cloud.siliconflow.cn/i/Ru1ycUvf 
+- 硅基流动API Key获取地址： https://cloud.siliconflow.cn/i/Ru1ycUvf  邀请码：n1f5tlqj
 
 2. 配置Word
 1. 启用开发者工具
