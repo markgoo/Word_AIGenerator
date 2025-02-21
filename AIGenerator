@@ -1,47 +1,163 @@
+' 主函数：处理选中文本并调用 API
+Sub DeepSeekV3()
+    Dim api_key As String
+    Dim inputText As String
+    Dim response As String
+    Dim originalSelection As Object
+    
+    ' API Key 验证
+    api_key = "sk-你的申请的 API Key"
+    If api_key = "" Then
+        MsgBox "Please enter the API key."
+        Exit Sub
+    ElseIf Selection.Type <> wdSelectionNormal Then
+        MsgBox "Please select text."
+        Exit Sub
+    End If
+    
+    ' 保存原始选中的文本
+    Set originalSelection = Selection.Range.Duplicate
+    
+    ' 处理输入文本
+    inputText = Selection.Text
+    
+    ' 调用 API
+    response = CallDeepSeekAPI(api_key, inputText)
+    
+    If Left(response, 5) <> "Error" Then
+        If Len(response) > 0 Then
+            ' 提取和清理响应内容
+            response = ExtractContent(response)
+            response = CleanApiResponse(response)
+            
+            ' 插入和格式化响应
+            InsertFormattedResponse response, originalSelection
+        Else
+            MsgBox "Failed to parse API response.", vbExclamation
+        End If
+    Else
+        MsgBox response, vbCritical
+    End If
+End Sub
+
+' API 调用函数
 Function CallDeepSeekAPI(api_key As String, inputText As String) As String
     Dim API As String
-    Dim SendTxt As String
+    Dim jsonPayload As String
     Dim Http As Object
     Dim status_code As Integer
     Dim response As String
     
+    On Error GoTo ErrorHandler
+    
+    ' API endpoint
     API = "https://api.siliconflow.cn/v1/chat/completions"
     
-    ' 安全构造 免费大模型 JSON deepseek-ai/DeepSeek-R1-Distill-Qwen-7B; Qwen/Qwen2.5-Coder-7B-Instruct; deepseek-ai/DeepSeek-R1-Distill-Llama-8B
-    SendTxt = "{"
-    SendTxt = SendTxt & """model"": ""Qwen/Qwen2.5-7B-Instruct"","
-    SendTxt = SendTxt & """messages"": ["
-    SendTxt = SendTxt & "{""role"": ""system"", ""content"": ""You are a Word assistant""},"
-    SendTxt = SendTxt & "{""role"": ""user"", ""content"": """ & Replace(inputText, """", "\""") & """}"
-    SendTxt = SendTxt & "],"
-    SendTxt = SendTxt & """stream"": false,"
-    SendTxt = SendTxt & """max_tokens"": 4096" ' 增大 token 限制
-    SendTxt = SendTxt & "}"
+    ' 构建 JSON payload
+    jsonPayload = BuildJsonPayload(inputText)
     
+    ' 创建并配置 HTTP 请求
     Set Http = CreateObject("MSXML2.XMLHTTP")
     With Http
         .Open "POST", API, False
         .setRequestHeader "Content-Type", "application/json"
         .setRequestHeader "Authorization", "Bearer " & api_key
-        .Send SendTxt
+        
+        ' 发送请求并处理响应
+        .Send jsonPayload
         status_code = .Status
-        response = Replace(.responseText, Chr(0), "") ' 过滤特殊字符
+        
+        ' 处理响应
+        If status_code = 200 Then
+            ' 清理响应文本
+            response = CleanResponseText(.responseText)
+            
+            ' 记录成功响应
+            LogApiResponse response
+            
+            CallDeepSeekAPI = response
+        Else
+            CallDeepSeekAPI = "Error: " & status_code & " - " & .responseText
+        End If
     End With
     
-    ' 写入日志文件
-    If status_code = 200 Then
-        CallDeepSeekAPI = response
-        Open "D:\api_response.log" For Append As #1
-        Print #1, Now() & " Response: " & response
-        Close #1
-    Else
-        CallDeepSeekAPI = "Error: " & status_code & " - " & response
-    End If
+    Set Http = Nothing
+    Exit Function
+
+ErrorHandler:
+    CallDeepSeekAPI = "Error: " & Err.Number & " - " & Err.Description
+    If Not Http Is Nothing Then Set Http = Nothing
 End Function
 
+' 构建 JSON payload
+Private Function BuildJsonPayload(inputText As String) As String
+    ' 清理输入文本
+    Dim cleanInput As String
+    cleanInput = SanitizeInput(inputText)
+    
+    ' 构建 JSON
+    Dim json As String
+    json = "{"
+    json = json & """model"": ""Qwen/Qwen2.5-7B-Instruct"","
+    json = json & """messages"": ["
+    json = json & "{""role"": ""system"", ""content"": ""You are a Word assistant""},"
+    json = json & "{""role"": ""user"", ""content"": """ & cleanInput & """}"
+    json = json & "],"
+    json = json & """stream"": false,"
+    json = json & """max_tokens"": 4096"
+    json = json & "}"
+    
+    BuildJsonPayload = json
+End Function
+
+' 清理输入文本
+Private Function SanitizeInput(text As String) As String
+    Dim sanitized As String
+    sanitized = text
+    
+    ' 处理转义序列
+    sanitized = Replace(sanitized, "\", "\\")
+    sanitized = Replace(sanitized, """", "\""")
+    sanitized = Replace(sanitized, vbCrLf, "\n")
+    sanitized = Replace(sanitized, vbCr, "\n")
+    sanitized = Replace(sanitized, vbLf, "\n")
+    sanitized = Replace(sanitized, vbTab, "\t")
+    
+    ' 移除可能有问题的字符
+    sanitized = Replace(sanitized, Chr(0), "")
+    
+    SanitizeInput = sanitized
+End Function
+
+' 清理 API 响应文本
+Private Function CleanResponseText(responseText As String) As String
+    Dim cleanText As String
+    cleanText = responseText
+    
+    cleanText = Replace(cleanText, Chr(0), "")
+    cleanText = Replace(cleanText, vbNullChar, "")
+    
+    CleanResponseText = cleanText
+End Function
+
+' 记录 API 响应
+Private Sub LogApiResponse(response As String)
+    On Error Resume Next
+    
+    Const LOG_FILE As String = "D:\api_response.log"
+    
+    Open LOG_FILE For Append As #1
+    Print #1, Now() & " Response: " & response
+    Close #1
+    
+    On Error GoTo 0
+End Sub
+
+' 从响应中提取内容
 Function ExtractContent(responseText As String) As String
     Dim regEx As Object
     Dim matches As Object
+    Dim Content As String
     Dim result As String
     
     Set regEx = CreateObject("VBScript.RegExp")
@@ -54,140 +170,90 @@ Function ExtractContent(responseText As String) As String
     
     Set matches = regEx.Execute(responseText)
     
-    ' 合并所有匹配内容（按出现顺序）
+    ' 合并所有匹配内容
     For i = 0 To matches.Count - 1
         If matches(i).SubMatches.Count > 0 Then
             Content = matches(i).SubMatches(0)
             
-            ' 处理转义字符序列（按 JSON 标准处理）
-            Content = Replace(Content, "\""", """")   ' 转义双引号
-            Content = Replace(Content, "\\", "\")     ' 转义反斜杠
-            Content = Replace(Content, "\/", "/")     ' 转义斜杠
-            Content = Replace(Content, "\b", Chr(8))  ' 退格
-            Content = Replace(Content, "\f", Chr(12)) ' 换页
-            Content = Replace(Content, "\n", vbCrLf)  ' 换行
-            Content = Replace(Content, "\r", vbCr)    ' 回车
-            Content = Replace(Content, "\t", vbTab)   ' 水平制表符
+            ' 处理转义字符
+            Content = Replace(Content, "\""", """")
+            Content = Replace(Content, "\\", "\")
+            Content = Replace(Content, "\/", "/")
+            Content = Replace(Content, "\b", Chr(8))
+            Content = Replace(Content, "\f", Chr(12))
+            Content = Replace(Content, "\n", vbCrLf)
+            Content = Replace(Content, "\r", vbCr)
+            Content = Replace(Content, "\t", vbTab)
             
             result = result & Content
         End If
     Next i
+    
     ExtractContent = result
     Set regEx = Nothing
 End Function
 
+' 清理 API 响应
 Function CleanApiResponse(responseText As String) As String
     Dim regEx As Object
     Dim cleanedText As String
     
     Set regEx = CreateObject("VBScript.RegExp")
     
-    ' ========== 核心处理逻辑 ==========
-    
-    ' 1. 替换连续 \n\n 为 Word 段落标记（^p）
-    regEx.Pattern = "(\\n){2,}"  ' 匹配连续2个及以上 \n
+    ' 处理连续换行
+    regEx.Pattern = "(\\n){2,}"
     regEx.Global = True
-    cleanedText = regEx.Replace(responseText, vbCrLf) ' Word段落换行
+    cleanedText = regEx.Replace(responseText, vbCrLf)
     
-    ' 2. 替换多个 vbCrlf 多个回车为 一个Word 换行符（Shift+Enter）
-    regEx.Pattern = "(\\r){2,}"  ' 匹配连续2个及以上 \n
+    ' 处理连续回车
+    regEx.Pattern = "(\\r){2,}"
     cleanedText = regEx.Replace(cleanedText, "\r")
       
-    ' 3. 处理其他转义字符
-    regEx.Pattern = "\\([^n])"  ' 匹配非换行的转义符（如 \", \t）
-    cleanedText = regEx.Replace(cleanedText, "$1") ' 移除转义符保留内容
+    ' 处理其他转义字符
+    regEx.Pattern = "\\([^n])"
+    cleanedText = regEx.Replace(cleanedText, "$1")
     
-    ' 4. 清理剩余特殊符号
-    ' regEx.Pattern = "[^\x00-\x7F]"  ' 匹配非ASCII字符（可选）
-    ' cleanedText = regEx.Replace(cleanedText, "") ' 根据需求开启
-    
-    ' ========== 最终优化 ==========
     CleanApiResponse = Trim(cleanedText)
     Set regEx = Nothing
 End Function
 
-
-Sub DeepSeekV3()
-    Dim api_key As String
-    Dim inputText As String
-    Dim response As String
-    Dim originalSelection As Object
-
-    api_key = "sk-你的申请的 API Key"
-    If api_key = "" Then
-        MsgBox "Please enter the API key."
-        Exit Sub
-    ElseIf Selection.Type <> wdSelectionNormal Then
-        MsgBox "Please select text."
-        Exit Sub
-    End If
-
-    ' 保存原始选中的文本
-    Set originalSelection = Selection.Range.Duplicate
-
-    inputText = Replace(Replace(Replace(Replace(Replace(Selection.Text, "\", "\\"), vbCrLf, ""), vbCr, ""), vbLf, ""), Chr(34), "\""")
-    response = CallDeepSeekAPI(api_key, inputText)
-
-    If Left(response, 5) <> "Error" Then
-              
-        If Len(response) > 0 Then
-   
-            response = ExtractContent(response)
-            'Open "D:\api_response.log" For Append As #3
-            'Print #3, Now() & "第3次过滤" & " Response: " & response
-            'Close #3
-            
-             ' 将连续的两个换行符转换为Word可识别的格式
-           
-            response = CleanApiResponse(response)
-            
-            'Open "D:\api_response.log" For Append As #4
-            'Print #4, Now() & "第4次过滤" & " Response: " & response
-           ' Close #4
-
-            ' 取消选中原始文本
-            Selection.Collapse Direction:=wdCollapseEnd
-            
-                ' 记录插入起始位置
-            Dim startPos As Long
-            startPos = Selection.Start
-
-            ' 将内容插入到选中文字的下一行
-            Selection.TypeParagraph ' 插入新行
-                     
-            Selection.TypeText Text:=response
-            
-             ' 记录结束位置
-            Dim endPos As Long
-            endPos = Selection.Start
-            
-          ' 选中新插入的文本
-            Dim newRange As Range
-            Set newRange = ActiveDocument.Range(startPos, endPos)
-            
-            ' 设置格式
-            With newRange
-                ' 设置字体
-                .Font.Name = "宋体"
-                .Font.Name = "Times New Roman"
-                .Font.Size = 11
-                
-                ' 设置段落格式：首行缩进2字符（约等于28.35磅）
-                .Paragraphs.FirstLineIndent = CentimetersToPoints(1) ' 2字符≈1厘米
-                ' 或者直接设置磅值（1字符≈14.175磅）
-                ' .Paragraphs.FirstLineIndent = 28.35 ' 2字符
-                
-                ' 可选：设置行距
-                .Paragraphs.LineSpacingRule = wdLineSpaceMultiple
-                .Paragraphs.LineSpacing = 18 ' 1.5倍行距
-            End With
-
-            ' 将光标移回原来选中文本的末尾
-            originalSelection.Select
-        Else
-            MsgBox "Failed to parse API response.", vbExclamation
-        End If
-    Else
-        MsgBox response, vbCritical
-    End If
+' 插入并格式化响应
+Private Sub InsertFormattedResponse(response As String, originalSelection As Range)
+    ' 移动到选区末尾
+    Selection.Collapse Direction:=wdCollapseEnd
+    
+    ' 插入新段落
+    Selection.TypeParagraph
+    
+    ' 记录起始位置
+    Dim startPos As Long
+    startPos = Selection.Start
+    
+    ' 插入响应文本
+    Selection.TypeText Text:=response
+    
+    ' 记录结束位置
+    Dim endPos As Long
+    endPos = Selection.Start
+    
+    ' 格式化插入的文本
+    Dim newRange As Range
+    Set newRange = ActiveDocument.Range(startPos, endPos)
+    
+    With newRange
+        ' 设置字体
+        .Font.Name = "宋体"
+        .Font.Name = "Times New Roman"
+        .Font.Size = 11
+        
+        ' 设置段落格式
+        With .Paragraphs
+            .FirstLineIndent = CentimetersToPoints(1)
+            .LineSpacingRule = wdLineSpaceMultiple
+            .LineSpacing = 18 ' 1.5倍行距
+        End With
+    End With
+    
+    ' 恢复原始选区
+    originalSelection.Select
 End Sub
